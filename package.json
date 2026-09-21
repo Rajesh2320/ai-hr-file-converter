@@ -1,14 +1,20 @@
 {
   "name": "ai-hr-file-converter",
   "version": "1.0.0",
+  "description": "PDF/DOCX to text converter for HR assistant",
   "main": "converter-server-complete.js",
   "scripts": {
-    "start": "node converter-server-complete.js"
+    "start": "node converter-server-complete.js",
+    "dev": "nodemon converter-server-complete.js"
   },
+  "keywords": ["pdf", "docx", "text-extraction"],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "mammoth": "^1.8.1"
+    "mammoth": "^1.8.1",
+    "pdfjs-dist": "^3.11.174"
   },
   "engines": {
     "node": "18.x"
