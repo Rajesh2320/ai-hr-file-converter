@@ -1,5 +1,6 @@
-// File Converter Server - Deploy to Railway for FREE
+// File Converter Server - Deploy to Railway/Render for FREE
 // Handles PDF, DOCX, TXT conversion to plain text
+// This is a standalone Node.js server that your edge function calls
 
 const express = require("express");
 const cors = require("cors");
@@ -16,6 +17,25 @@ app.use(express.json({ limit: "50mb" }));
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Debug endpoint - check if pdftotext is installed
+app.get("/debug", (req, res) => {
+  try {
+    const result = execSync("which pdftotext", { encoding: "utf-8" }).trim();
+    res.json({ 
+      status: "ok",
+      pdftotext_path: result,
+      node_version: process.version,
+      platform: process.platform,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "pdftotext not found",
+      error: error.message,
+    });
+  }
 });
 
 // Main conversion endpoint
@@ -40,6 +60,8 @@ app.post("/convert", async (req, res) => {
       return res.status(400).json({ error: "Invalid base64 encoding" });
     }
 
+    console.log(`Processing ${fileType} file, size: ${buffer.length} bytes`);
+
     let extractedText = "";
 
     // ============================================
@@ -50,18 +72,30 @@ app.post("/convert", async (req, res) => {
         // Write buffer to temp file
         tempFile = path.join(os.tmpdir(), `pdf_${Date.now()}.pdf`);
         fs.writeFileSync(tempFile, buffer);
+        console.log(`Wrote temp file: ${tempFile}`);
+
+        // Check if file exists
+        if (!fs.existsSync(tempFile)) {
+          throw new Error("Temp file was not created");
+        }
+
+        console.log(`Temp file size: ${fs.statSync(tempFile).size} bytes`);
 
         // Use pdftotext CLI to extract text
+        console.log("Running pdftotext...");
         const text = execSync(`pdftotext "${tempFile}" -`, {
           encoding: "utf-8",
           maxBuffer: 10 * 1024 * 1024,
         });
 
+        console.log(`Extracted ${text.length} characters`);
         extractedText = text;
       } catch (error) {
+        console.error("PDF extraction error:", error.message);
         return res.status(400).json({
           error: "PDF extraction failed",
           detail: error.message,
+          hint: "Make sure pdftotext is installed",
         });
       }
     }
@@ -78,6 +112,7 @@ app.post("/convert", async (req, res) => {
           console.warn("Mammoth warnings:", result.messages);
         }
       } catch (error) {
+        console.error("DOCX extraction error:", error.message);
         return res.status(400).json({
           error: "DOCX extraction failed",
           detail: error.message,
@@ -109,8 +144,8 @@ app.post("/convert", async (req, res) => {
 
     // Clean extracted text
     const cleanedText = extractedText
-      .replace(/[\x00-\x1F\x7F]/g, " ")
-      .replace(/\s+/g, " ")
+      .replace(/[\x00-\x1F\x7F]/g, " ") // Remove control characters
+      .replace(/\s+/g, " ") // Collapse whitespace
       .trim();
 
     // Validate extracted text
@@ -162,4 +197,5 @@ app.listen(PORT, () => {
   console.log(`✓ File converter running on http://localhost:${PORT}`);
   console.log(`  POST /convert - Convert PDF/DOCX/TXT to text`);
   console.log(`  GET  /health - Health check`);
+  console.log(`  GET  /debug  - Debug info (check if pdftotext is installed)`);
 });
