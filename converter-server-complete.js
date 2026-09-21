@@ -1,46 +1,27 @@
 // File Converter Server - Deploy to Railway/Render for FREE
 // Handles PDF, DOCX, TXT conversion to plain text
-// This is a standalone Node.js server that your edge function calls
+// Uses pdfjs-dist (pure JavaScript) - no system binaries needed
 
 const express = require("express");
 const cors = require("cors");
 const mammoth = require("mammoth");
-const { execSync } = require("child_process");
+const pdfjsLib = require("pdfjs-dist");
 const fs = require("fs");
-const path = require("path");
-const os = require("os");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+
+// Set up PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Debug endpoint - check if pdftotext is installed
-app.get("/debug", (req, res) => {
-  try {
-    const result = execSync("which pdftotext", { encoding: "utf-8" }).trim();
-    res.json({ 
-      status: "ok",
-      pdftotext_path: result,
-      node_version: process.version,
-      platform: process.platform,
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: "error",
-      message: "pdftotext not found",
-      error: error.message,
-    });
-  }
-});
-
 // Main conversion endpoint
 app.post("/convert", async (req, res) => {
-  let tempFile = null;
   try {
     const { fileData, fileType } = req.body;
 
@@ -65,37 +46,52 @@ app.post("/convert", async (req, res) => {
     let extractedText = "";
 
     // ============================================
-    // PDF: Use pdftotext CLI (most reliable)
+    // PDF: Use pdfjs-dist (pure JavaScript, no CLI needed)
     // ============================================
     if (fileType === "pdf") {
       try {
-        // Write buffer to temp file
-        tempFile = path.join(os.tmpdir(), `pdf_${Date.now()}.pdf`);
-        fs.writeFileSync(tempFile, buffer);
-        console.log(`Wrote temp file: ${tempFile}`);
+        console.log("Starting PDF extraction with pdfjs-dist...");
 
-        // Check if file exists
-        if (!fs.existsSync(tempFile)) {
-          throw new Error("Temp file was not created");
+        // Load PDF document from buffer
+        const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+        console.log(`PDF loaded: ${pdf.numPages} pages`);
+
+        let text = "";
+
+        // Extract text from each page
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          try {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+
+            // Extract text from content items
+            const pageText = textContent.items
+              .map(item => {
+                if (item.str) {
+                  return item.str;
+                }
+                return "";
+              })
+              .join(" ");
+
+            text += pageText + " ";
+            console.log(`Extracted page ${pageNum}/${pdf.numPages}`);
+          } catch (pageError) {
+            console.warn(`Failed to extract page ${pageNum}:`, pageError.message);
+          }
         }
 
-        console.log(`Temp file size: ${fs.statSync(tempFile).size} bytes`);
+        if (text.trim().length === 0) {
+          throw new Error("No text could be extracted from PDF");
+        }
 
-        // Use pdftotext CLI to extract text
-        console.log("Running pdftotext...");
-        const text = execSync(`pdftotext "${tempFile}" -`, {
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-        });
-
-        console.log(`Extracted ${text.length} characters`);
         extractedText = text;
+        console.log(`✓ PDF extraction succeeded: ${extractedText.length} characters`);
       } catch (error) {
         console.error("PDF extraction error:", error.message);
         return res.status(400).json({
           error: "PDF extraction failed",
           detail: error.message,
-          hint: "Make sure pdftotext is installed",
         });
       }
     }
@@ -104,6 +100,7 @@ app.post("/convert", async (req, res) => {
     // ============================================
     else if (fileType === "docx") {
       try {
+        console.log("Starting DOCX extraction with mammoth...");
         const result = await mammoth.extractRawText({ buffer });
         extractedText = result.value;
 
@@ -111,6 +108,8 @@ app.post("/convert", async (req, res) => {
         if (result.messages && result.messages.length > 0) {
           console.warn("Mammoth warnings:", result.messages);
         }
+
+        console.log(`✓ DOCX extraction succeeded: ${extractedText.length} characters`);
       } catch (error) {
         console.error("DOCX extraction error:", error.message);
         return res.status(400).json({
@@ -124,7 +123,9 @@ app.post("/convert", async (req, res) => {
     // ============================================
     else if (fileType === "txt") {
       try {
+        console.log("Starting TXT extraction...");
         extractedText = buffer.toString("utf-8");
+        console.log(`✓ TXT extraction succeeded: ${extractedText.length} characters`);
       } catch (error) {
         return res.status(400).json({
           error: "TXT decoding failed",
@@ -158,6 +159,7 @@ app.post("/convert", async (req, res) => {
     }
 
     // Success
+    console.log(`✓ Conversion successful: ${cleanedText.length} characters`);
     return res.json({
       success: true,
       text: cleanedText,
@@ -170,15 +172,6 @@ app.post("/convert", async (req, res) => {
       error: "Server error during conversion",
       message: error.message,
     });
-  } finally {
-    // Clean up temp file
-    if (tempFile && fs.existsSync(tempFile)) {
-      try {
-        fs.unlinkSync(tempFile);
-      } catch (e) {
-        console.warn("Failed to delete temp file:", e.message);
-      }
-    }
   }
 });
 
@@ -197,5 +190,5 @@ app.listen(PORT, () => {
   console.log(`✓ File converter running on http://localhost:${PORT}`);
   console.log(`  POST /convert - Convert PDF/DOCX/TXT to text`);
   console.log(`  GET  /health - Health check`);
-  console.log(`  GET  /debug  - Debug info (check if pdftotext is installed)`);
+  console.log(`  Using pdfjs-dist for PDF parsing (no system binaries needed)`);
 });
