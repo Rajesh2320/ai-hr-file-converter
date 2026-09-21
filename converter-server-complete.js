@@ -1,19 +1,15 @@
 // File Converter Server - Deploy to Railway/Render for FREE
 // Handles PDF, DOCX, TXT conversion to plain text
-// Uses pdfjs-dist (pure JavaScript) - no system binaries needed
+// Uses pdf-parse (simple, reliable npm package - no system binaries or workers needed)
 
 const express = require("express");
 const cors = require("cors");
 const mammoth = require("mammoth");
-const pdfjsLib = require("pdfjs-dist");
-const fs = require("fs");
+const pdfParse = require("pdf-parse");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-
-// Set up PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -46,47 +42,24 @@ app.post("/convert", async (req, res) => {
     let extractedText = "";
 
     // ============================================
-    // PDF: Use pdfjs-dist (pure JavaScript, no CLI needed)
+    // PDF: Use pdf-parse (simple and reliable)
     // ============================================
     if (fileType === "pdf") {
       try {
-        console.log("Starting PDF extraction with pdfjs-dist...");
+        console.log("Starting PDF extraction with pdf-parse...");
 
-        // Load PDF document from buffer
-        const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-        console.log(`PDF loaded: ${pdf.numPages} pages`);
+        // Parse PDF buffer
+        const data = await pdfParse(buffer);
+        
+        console.log(`PDF loaded: ${data.numpages} pages`);
+        console.log(`Extracted ${data.text.length} characters`);
 
-        let text = "";
-
-        // Extract text from each page
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          try {
-            const page = await pdf.getPage(pageNum);
-            const textContent = await page.getTextContent();
-
-            // Extract text from content items
-            const pageText = textContent.items
-              .map(item => {
-                if (item.str) {
-                  return item.str;
-                }
-                return "";
-              })
-              .join(" ");
-
-            text += pageText + " ";
-            console.log(`Extracted page ${pageNum}/${pdf.numPages}`);
-          } catch (pageError) {
-            console.warn(`Failed to extract page ${pageNum}:`, pageError.message);
-          }
-        }
-
-        if (text.trim().length === 0) {
+        if (!data.text || data.text.trim().length === 0) {
           throw new Error("No text could be extracted from PDF");
         }
 
-        extractedText = text;
-        console.log(`✓ PDF extraction succeeded: ${extractedText.length} characters`);
+        extractedText = data.text;
+        console.log(`✓ PDF extraction succeeded`);
       } catch (error) {
         console.error("PDF extraction error:", error.message);
         return res.status(400).json({
@@ -190,5 +163,5 @@ app.listen(PORT, () => {
   console.log(`✓ File converter running on http://localhost:${PORT}`);
   console.log(`  POST /convert - Convert PDF/DOCX/TXT to text`);
   console.log(`  GET  /health - Health check`);
-  console.log(`  Using pdfjs-dist for PDF parsing (no system binaries needed)`);
+  console.log(`  Using pdf-parse for PDF extraction (no system binaries or workers needed)`);
 });
