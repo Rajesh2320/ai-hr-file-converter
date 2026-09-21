@@ -1,5 +1,0 @@
-[build]
-nixpkgs = ["poppler_utils", "nodejs"]
-
-[start]
-run = "npm start"
